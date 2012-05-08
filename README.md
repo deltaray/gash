@@ -1,4 +1,12 @@
 
+NOTICE
+======
+This program isn't fully ready for public decimation at this time. I've put
+it on github, but that's mostly just to keep track of the code during development
+and let a few people watch the progress. Please don't announce this anywhere
+yet without getting my permission (deltaray@slugbug.org). Thanks.
+
+
 Welcome
 =======
 
