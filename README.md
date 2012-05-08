@@ -47,10 +47,14 @@ BASH users:
 ZSH users:
 ----------
 
-  zsh has a similar function for running programs before printing the normal
-PS1 prompt.
+  zsh has a similar function called precmd() for running programs before
+  printing the normal PS1 prompt. Put this function in your .zshrc file:
 
-   NEED TO WRITE INSTRUCTIONS HERE
+  `function precmd() { lastreturn=$? ; history | gash -i -C $COLUMNS -l $lastreturn }`
+
+  Note that you don't need to backslash the variable names like you do in the
+  BASH example.
+   
 
 GASH commands
 =============
@@ -67,13 +71,13 @@ using the gash program. The commands take the following syntax.
   Where object could be an object you want to work with and command is one of
 the following commands:
 
-   look
-   inventory
-   character
-   take
-   drop
-   buy
-   sell
+* __look__
+* __inventory__
+* __character__
+* __take__
+* __drop__
+* __buy__
+* __sell__
 
  Somewhere on the filesystem there is an in game store where you can buy
 items that will help you during your journey. If you go into the store
@@ -90,53 +94,53 @@ Config file options
 
 ### Available settings
 
-* utf8_mode (default: yes) - Uses utf-8 characters available now on most popular terminals.
+* __utf8_mode__ (default: yes) - Uses utf-8 characters available now on most popular terminals.
 
-* display_256colors (default: yes) - Use 256 color xterm output available now on most terminals.
+* __display_256colors__ (default: yes) - Use 256 color xterm output available now on most terminals.
 
-* hud_display (default: yes) - Turn on or off the character stats display (HUD = Heads Up Display)
+* __hud_display__ (default: yes) - Turn on or off the character stats display (HUD = Heads Up Display)
 
-* hud_every_n_times (default: 1) - Another way you can control the display
+* __hud_every_n_times__ (default: 1) - Another way you can control the display
            of the HUD is to only display it every so many commands. By
            default this is set to 1 (every time), but you can change this
            to something like 10 and it will only display the HUD every
            10th command. It determines this based on the command history
            number so it might not display right away after changing it.
 
-* hud_type (default: beforeprompt) - Change how the HUD is displayed.
+* __hud_type__ (default: beforeprompt) - Change how the HUD is displayed.
 
-    * beforeprompt - A single line before each prompt.
+    * _beforeprompt_ - A single line before each prompt.
 
-    * box - Draw a nice box in the upper right corner of your terminal.
+    * _box_ - Draw a nice box in the upper right corner of your terminal.
           The setback of using this option is that it overwrites whatever
           was output from the previous command you ran in that corner
           of the terminal and it clutters up your scrollback history with
           every write.
 
-    * topline - A single line at the top of the terminal. This also
+    * _topline_ - A single line at the top of the terminal. This also
               has the drawback of overwriting the top line of your last 
               program's output.
 
-    * titlebar - Draws the HUD inside your terminal emulator's window titlebar.
+    * _titlebar_ - Draws the HUD inside your terminal emulator's window titlebar.
                This can be a nice solution for getting it out of the way, however
 
-* hud_color_fg (default: white)- The foreground color of your HUD. See ANSI colors and attributes section.
-* hud_color_bg (default: normal) - The background color of your HUD. See ANSI colors and attributes section.
-* hud_color_attr - A comma seperated list of ANSI attributes used on the HUD text. See ANSI colors and attributes section.
+* __hud_color_fg__ (default: white)- The foreground color of your HUD. See ANSI colors and attributes section.
+* __hud_color_bg__ (default: normal) - The background color of your HUD. See ANSI colors and attributes section.
+* __hud_color_attr__  A comma seperated list of ANSI attributes used on the HUD text. See ANSI colors and attributes section.
 
-* messages_display (default: yes) - The messages display comes up when you level up, encounter things, take damage, game messages, etc.
-* messages_color_fg (default: yellow) - The foreground color of the Messages area. See ANSI colors and attributes section.
-* messages_color_bg (default: normal) - The background color of the Messages area. See ANSI colors and attributes section.
-* messages_color_attr - A comma seperated list of ANSI attributes used on the messages area. See ANSI colors and attributes section.
+* __messages_display__ (default: yes) - The messages display comes up when you level up, encounter things, take damage, game messages, etc.
+* __messages_color_fg__ (default: yellow) - The foreground color of the Messages area. See ANSI colors and attributes section.
+* __messages_color_bg__ (default: normal) - The background color of the Messages area. See ANSI colors and attributes section.
+* __messages_color_attr__  A comma seperated list of ANSI attributes used on the messages area. See ANSI colors and attributes section.
 
-* character_color_fg (default: blue) - The foreground color of the Character display. See ANSI colors and attributes section.
-* character_color_bg (default: normal) - The background color of the Character display. See ANSI colors and attributes section.
-* character_color_attr - A comma seperated list of ANSI attributes used on the Character display. See ANSI colors and attributes section.
+* __character_color_fg__ (default: blue) - The foreground color of the Character display. See ANSI colors and attributes section.
+* __character_color_bg__ (default: normal) - The background color of the Character display. See ANSI colors and attributes section.
+* __character_color_attr__  A comma seperated list of ANSI attributes used on the Character display. See ANSI colors and attributes section.
 
-* silence (default: no) - Controls all output of all messages and displays in GASH. Set to yes to turn all displays off.
+* __silence__ (default: no) - Controls all output of all messages and displays in GASH. Set to yes to turn all displays off.
 
-* leaderboard (default: no) - Connect with the GASH worldwide leaderboard at gash.climagic.org. (Doesn't work yet)
-* leaderboard_authcode (default: NULL) - Authentication code for connecting to leaderboard.
+* __leaderboard__ (default: no) - Connect with the GASH worldwide leaderboard at gash.climagic.org. (Doesn't work yet)
+* __leaderboard_authcode__ (default: NULL) - Authentication code for connecting to leaderboard.
 
 
 ANSI colors and attributes
@@ -159,11 +163,11 @@ Also the following attributes are supported by gash, however your
 terminal may not display some of them.
 
 * normal
-* bold  (bright and light are aliases for this)
-* italic
+* __bold__  (bright and light are aliases for this)
+* _italic_
 * underline
 * blink
-* reverse
+* reverse (reverses the foreground and background colors)
 * invisible 
 
 
@@ -173,10 +177,10 @@ Environment variables
 The following environment variables can be set so you can quickly control some
 aspects of gash that you may wish to override for a little bit:
 
-* GASH_HUD - Set to 0 to turn off the HUD. 
-* GASH_MESSAGES - Set to 0 to turn off the message display
-* GASH_SILENCE - Set to 1 to turn off all gash messages.
-* GASH_VERBOSE, GASH_DEBUG - This is for developers to quickly check things.
+* __GASH_HUD__ - Set to 0 to turn off the HUD. 
+* __GASH_MESSAGES__ - Set to 0 to turn off the message display
+* __GASH_SILENCE__ - Set to 1 to turn off all gash messages.
+* __GASH_VERBOSE__, __GASH_DEBUG__ - This is for developers to quickly check things.
 
   Example of usage:
 

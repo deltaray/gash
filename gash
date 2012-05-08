@@ -30,7 +30,7 @@
 #
 ########### PLEASE READ! #### PLEASE READ! #### PLEASE READ! ##################
 
-my $VERSION = '0.2b';
+my $VERSION = '0.2c';
 
 # Design considerations
 # 1. Ideally, never take more than .25 seconds to run.
@@ -543,15 +543,15 @@ if ($readinputforhist) {
 EOD
     } else {
 
-        if ($shell eq "/bin/bash") {
+        if ($shell =~ m|/bin/bash|) {
             print <<EOD;
 Welcome to GASH, the gamification system for your interactive shell.
 To use gash, put the following in your PROMPT_COMMAND variable:
 
-PROMPT_COMMAND="lastreturn=\$?; history |gash -i -C \$COLUMNS -l \$lastreturn"
+PROMPT_COMMAND="lastreturn=\\\$?; history |gash -i -C \\\$COLUMNS -l \\\$lastreturn"
 
 You can append this to any current PROMPT_COMMAND you have set, but make
-sure the lastreturn=\$? part goes before everything else. Put this in
+sure the lastreturn=\\\$? part goes before everything else. Put this in
 your .bashrc so it runs on every login. Make sure you include the backslashes
 preceeding the variable names.
 
@@ -560,11 +560,23 @@ configuration options. See the sample rc file that came with the gash program.
 
 EOD
 
-        } elsif ($shell eq "/bin/zsh") {
-        } elsif ($shell eq "/bin/tcsh") {
+        } elsif ($shell =~ m|/bin/zsh|) {
+            print <<EOD;
+Welcome to GASH, the gamification system for your interactive shell.
+To use GASH with zsh, put the following function in your ~/.zshrc file:
+
+function precmd() { lastreturn=\$? ; history | gash -i -C \$COLUMNS -l \$lastreturn }`
+
+You can add this to a precmd function that you already have, but make sure
+you put the lastreturn=\$? part before anything else in your function.
+
+You can also setup a .gashrc file in your home directory for extra
+configuration options. See the sample rc file that came with the gash program.
+
+EOD
 
         } else {
-            print "I'm sorry but gash doesn't support your shell: $shell.\n";
+            print "I'm sorry but gash doesn't support your shell '$shell' yet.\n";
         }
     }
     exit(0);
