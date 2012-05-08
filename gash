@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# GASH v0.2 by Mark Krenz (deltaray@slugbug.org)
+# GASH by Mark Krenz (deltaray@slugbug.org)
 # Additional help and input by the folks on the freenode#climagic channel.
 
 # GAmified SHell, putting your interactive shell into a pseudo-fantasy setting.
@@ -30,7 +30,7 @@
 #
 ########### PLEASE READ! #### PLEASE READ! #### PLEASE READ! ##################
 
-
+my $VERSION = '0.2b';
 
 # Design considerations
 # 1. Ideally, never take more than .25 seconds to run.
@@ -71,9 +71,10 @@ my $configfile = "$homedir/.gashrc";
 my $savefile = "$homedir/.gashsave";
 
 my %opts;
-getopts('C:c:Dhil:rs:v', \%opts);
+getopts('C:c:Dhil:rs:vV', \%opts);
 
 if ($opts{'v'}) { $verbose = 1; }
+if ($opts{'V'}) { print "GASH beta version $VERSION\n"; exit(0); }
 if ($opts{'D'}) { $verbose = 2; }
 if ($opts{'C'}) { $columns = $opts{'C'}; }
 if ($opts{'c'}) { $configfile = $opts{'c'}; }
@@ -826,24 +827,23 @@ sub makesavedata {
 }
 
 # Original idea, we'll come back to this more complex way later.
-sub level_base_exp_calc {
-    my $level = shift;
-
-    my $base_exp = 0;
-    for ($i = 1; $i < $level; $i++) {
-        $base_exp += ($i - 1) * 100 * (1 + ($i / 20));
-    }
-    return $base_exp;
-}
-
 #sub level_base_exp_calc {
 #    my $level = shift;
 #
-#    #$base_exp = ($level * 100) - 100;
-#    $base_exp = ($level * 10) - 10;
-#
+#    my $base_exp = 0;
+#    for ($i = 1; $i < $level; $i++) {
+#        $base_exp += ($i - 1) * 100 * (1 + ($i / 20));
+#    }
 #    return $base_exp;
 #}
+
+sub level_base_exp_calc {
+    my $level = shift;
+
+    $base_exp = int((${level}**2 * 100) - 100);
+
+    return $base_exp;
+}
 
 # This was the original idea, I'm commenting it out for now.
 #sub level_max_hp_calc {

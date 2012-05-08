@@ -17,6 +17,6 @@ messages_color_fg = green
 messages_color_bg = normal
 messages_color_attr = bold,bright
 
-leaderboard = no
+leaderboard = no # This doesn't work yet.
 #leaderboard_authcode = 
 
