@@ -1,0 +1,1145 @@
+#!/usr/bin/perl
+
+# GASH v0.2 by Mark Krenz (deltaray@slugbug.org)
+# Additional help and input by the folks on the freenode#climagic channel.
+
+# GAmified SHell, putting your interactive shell into a pseudo-fantasy setting.
+# Written for most popular Unix shells including bash, zsh and tcsh.
+
+# The idea behind this is to encourage more people to try advanced ideas in their
+# shell, which gives them more experience points for doing so and eventually 
+# raises your level. As you progress the levels, easier commands won't give you
+# any experience points, so you'll have to learn to do more.
+
+# Released under GPL 3.0 License.
+
+
+########### PLEASE READ! #### PLEASE READ! #### PLEASE READ! ##################
+#
+# The source code is here so that you can check to make sure the program
+# doesn't pull any shenanigans and so that you can customize it expand
+# it if you want.
+#
+# Just because you can access the "game data" and see what lies ahead
+# doesn't mean you should, nor should you share such game data with others
+# and spoil the fun for everyone. Please respect that.
+# Try to have fun and respect other's wish to do the same.
+#
+# This doesn't make the program any less open source, but how do you make an
+# open source adventure game anyways without revealing everything?
+#
+########### PLEASE READ! #### PLEASE READ! #### PLEASE READ! ##################
+
+
+
+# Design considerations
+# 1. Ideally, never take more than .25 seconds to run.
+# 2. Be stateless.
+# 3. Be minimal.
+# 4. Multiple shells on same user@host should be treated as one.
+# 5. Be as simple as possible.
+# 6. Try not to pry into user data. Respect privacy.
+
+# Probably need to rewrite this OO so its easier to understand.
+
+# Need to be in utf8 mode lest we get wide character errors.
+use utf8;
+binmode STDOUT, ":utf8";
+
+# Module loads. Keep this minimal.
+use Getopt::Std;
+use Fcntl qw(:flock );
+use Data::Dumper;
+
+my $lastreturnvalue;
+
+my $verbose = 0;
+my $reversevideo = 0;
+my $help = 0;
+my $readinputforhist = 0; # Don't do this by default so user reads instructions.
+
+my $ansi_reset = "\e[0m";
+
+my $homedir = $ENV{'HOME'};
+my $username = $ENV{'USER'};
+my $shell = $ENV{'SHELL'};
+my $pwd = $ENV{'PWD'};
+my $oldpwd = $ENV{'OLDPWD'};
+my $term = $ENV{'TERM'};
+
+my $configfile = "$homedir/.gashrc";
+my $savefile = "$homedir/.gashsave";
+
+my %opts;
+getopts('C:c:Dhil:rs:v', \%opts);
+
+if ($opts{'v'}) { $verbose = 1; }
+if ($opts{'D'}) { $verbose = 2; }
+if ($opts{'C'}) { $columns = $opts{'C'}; }
+if ($opts{'c'}) { $configfile = $opts{'c'}; }
+if ($opts{'h'}) { $help = 1; }
+if ($opts{'i'}) { $readinputforhist = 1; }
+
+
+#$verbose = 2;
+
+if ($opts{'l'} =~ m/(\d+)/) {
+    $lastreturnvalue = $opts{'l'};
+    print "DEBUG: lastreturnvalue = $lastreturnvalue\n" if ($verbose >= 2);
+} else {
+    $help = 1;
+}
+
+if ($opts{'r'}) { $reversevideo = 1; }
+
+if ($opts{'s'}) { $savefile = 1; }
+
+
+
+
+# Characters used for drawing boxes around messages and the HUD.
+%utf8_box_chars = (
+    'upper_left_corner'  => '╭',
+    'upper_right_corner' => '╮',
+    'lower_left_corner'  => '╰',
+    'lower_right_corner' => '╯',
+    'vertical'           => '│',
+    'horizontal'         => '─',
+    'title_right'        => '╾',
+    'title_left'         => '╼',
+);
+
+%ascii_box_chars = (
+    'upper_left_corner'  => '+',
+    'upper_right_corner' => '+',
+    'lower_left_corner'  => '\\',
+    'lower_right_corner' => '/',
+    'vertical'           => '|',
+    'horizontal'         => '-',
+    'title_right'        => '>',
+    'title_left'         => '<',
+);
+
+
+##################
+# DEFAULT VALUES #
+##################
+
+my $default_level = 1;
+my $default_exp = 0;
+my $default_hp = 5;
+my $default_gold = 500;
+
+my $default_utf8_mode = 'yes';
+my $default_display_256colors = 'yes';
+
+my $default_hud_display = 'yes';
+my $default_hud_type = 'beforeprompt';
+
+my $default_hud_every_n_times = 1; # Display the hud every time gash runs in regular mode.
+
+my $default_hud_color_fg = 'white';
+my $default_hud_color_bg = 'normal';
+my @default_hud_color_attr = ('bold','bright');
+
+my $default_messages_display = 'yes';
+my $default_messages_color_fg = 'yellow';
+my $default_messages_color_bg = 'normal';
+my @default_messages_color_attr = ('bold','bright');
+
+my $default_character_display = 'yes';
+my $default_character_color_fg = 'blue';
+my $default_character_color_bg = 'normal';
+my @default_character_color_attr = ('bold','bright');
+
+my $default_leaderboard = 'no';
+
+my $default_silence = 0;
+
+# Build the message up for display near the end of execution.
+my $message_output = "";
+
+my $game_engine_on = 1;
+
+###############
+# CONFIG FILE #
+###############
+
+# Data from the .gashrc file.
+my %configdata = ();
+
+my %gamedata = ();
+
+# Process config file if there is one.
+if (-e $configfile) {
+    open(my $configfh, "<", $configfile) || warn "WARN: Couldn't open $configfile: $!\n";
+    my $l = 0; # Keep a count of lines.
+    while (<$configfh>) {
+        chomp($_);
+        $l++;
+        next if ($_ =~ m/^#/ || $_ =~ m/^\s*$/); # Skip comment lines and blank/whitespace lines.
+
+        my $linelen = length($_);
+        my $key = "";
+        my $value = "";
+        my $buffer = "";
+  CHAR: for (my $i = 0; $i < $linelen; $i++) {
+            my $char = substr($_, $i, 1);
+            if ($char eq '\\') { # Escape the next character.
+                $i++;
+                $char = substr($_, $i, 1);
+                $buffer .= $char;
+            } elsif ($key eq "" && $char eq '=') {
+                $key = $buffer;
+                $buffer = "";
+            } elsif ($key eq "" && $char eq ' ') {
+                next CHAR; # Skip any spaces in the key part. This also allows you to indent
+
+            # After the key is set.
+
+            } elsif ($char eq '#') {
+                last CHAR; # Skip the rest of the line.
+            } else {
+                $buffer .= $char;
+            }
+        }
+        $value = $buffer; # The value is whatever is left in the buffer.
+
+        # Clean up the value. Get rid of whitespace before and after any value or key.
+        $key   =~ s/^\s+//;
+        $key   =~ s/\s+$//;
+        $value =~ s/^\s+//;
+        $value =~ s/\s+$//;
+
+        print "key: '$key' = value: '$value'\n" if ($verbose >= 2);
+        $configdata{$key} = $value;
+    }
+    print "read in $l lines from config file\n" if ($verbose >= 2);
+    close($configfh);
+}
+
+
+####################
+# SET FINAL VALUES #
+####################
+
+# Defaults are set and config values are set. Now set the values we will actually use.
+
+my ($utf8_mode, $display_256colors, $hud_display, $hud_type);
+my ($hud_color_fg, $hud_color_bg, @hud_color_attr, $messages_display);
+my ($message_color_fg, $message_color_bg, @message_color_attr);
+my ($character_color_fg, $character_color_bg,@character_color_attr);
+my ($leaderboard_enabled, $leaderboard_authcode);
+
+(&is_boolean($configdata{'utf8_mode'}))         ? ($utf8_mode = &make_boolean($configdata{'utf8_mode'}))       : ($utf8_mode = &make_boolean($default_utf8_mode));
+(&is_boolean($configdata{'display_256colors'})) ? ($display_256colors = &make_boolean($configdata{'display_256colors'})) : ($display_256colors = &make_boolean($default_display_256colors));
+
+(&is_boolean($configdata{'hud_display'}))       ? ($hud_display = &make_boolean($configdata{'hud_display'}))   : ($hud_display = &make_boolean($default_hud_display));
+(&is_alphanumeric($configdata{'hud_type'}))     ? ($hud_type = $configdata{'hud_type'})         : ($hud_type = $default_hud_type);
+
+(&is_alphanumeric($configdata{'hud_every_n_times'})) ? ($hud_every_n_times = $configdata{'hud_every_n_times'})  : ($hud_every_n_times = $default_hud_every_n_times);
+
+(&is_alphanumeric($configdata{'hud_color_fg'})) ? ($hud_color_fg = $configdata{'hud_color_fg'}) : ($hud_color_fg = $default_hud_color_fg);
+(&is_alphanumeric($configdata{'hud_color_bg'})) ? ($hud_color_bg = $configdata{'hud_color_bg'}) : ($hud_color_bg = $default_hud_color_bg);
+if (&is_alphanumlist($configdata{'hud_color_attr'})) {
+    @hud_color_attr = split(/,/, $configdata{'hud_color_attr'});
+} else {
+    @hud_color_attr = @default_hud_color_attr;
+}
+
+
+(&is_boolean($configdata{'messages_display'}))  ? ($messages_display = &make_boolean($configdata{'messages_display'})) : ($messages_display = &make_boolean($default_messages_display));
+(&is_alphanumeric($configdata{'messages_color_fg'})) ? ($messages_color_fg = $configdata{'messages_color_fg'}) : ($messages_color_fg = $default_messages_color_fg);
+(&is_alphanumeric($configdata{'messages_color_bg'})) ? ($messages_color_bg = $configdata{'messages_color_bg'}) : ($messages_color_bg = $default_messages_color_bg);
+if (&is_alphanumlist($configdata{'messages_color_attr'})) {
+    @messages_color_attr = split(/,/, $configdata{'messages_color_attr'});
+} else {
+    @messages_color_attr = @default_messages_color_attr;
+} 
+
+(&is_alphanumeric($configdata{'character_color_fg'})) ? ($character_color_fg = $configdata{'character_color_fg'}) : ($character_color_fg = $default_character_color_fg);
+(&is_alphanumeric($configdata{'character_color_bg'})) ? ($character_color_bg = $configdata{'character_color_bg'}) : ($character_color_bg = $default_character_color_bg);
+if (&is_alphanumlist($configdata{'character_color_attr'})) {
+    @character_color_attr = split(/,/, $configdata{'character_color_attr'});
+} else {
+    @character_color_attr = @default_character_color_attr;
+} 
+
+(&is_boolean($configdata{'silence'}))      ? ($silence = &make_boolean($configdata{'silence'}))   : ($silence = &make_boolean($default_silence));
+
+(&is_boolean($configdata{'leaderboard'}))               ? ($leaderboard = &make_boolean($configdata{'leaderboard'}))    : ($leaderboard = &make_boolean($default_leaderboard));
+(&is_alphanumeric($configdata{'leaderboard_authcode'})) ? ($leaderboard_authcode = $configdata{'leaderboard_authcode'}) : ($leaderboard_authcode = "");
+
+
+my $hud_themecode = &get_ansi_color_seq($hud_color_fg,$hud_color_bg,\@hud_color_attr);
+print "fg: $messages_color_fg bg: $messages_color_bg\n" if ($verbose >= 2);
+my $messages_themecode = &get_ansi_color_seq($messages_color_fg,$messages_color_bg, \@messages_color_attr);
+my $char_themecode = &get_ansi_color_seq($character_color_fg,$character_color_bg, \@character_color_attr);
+
+# Make references to the box character hashes that we'll use later.
+if ($utf8_mode) {
+    $hud_boxchar_ref = \%utf8_box_chars;
+    $messages_boxchar_ref = \%utf8_box_chars;
+    $character_boxchar_ref = \%utf8_box_chars;
+} else {
+    $hud_boxchar_ref = \%ascii_box_chars;
+    $messages_boxchar_ref = \%ascii_box_chars;
+    $character_boxchar_ref = \%ascii_box_chars;
+}
+
+########################################
+# PROCESS CUSTOM ENVIRONMENT VARIABLES #
+########################################
+
+# The "heads up" character display. on or off and can be set in ENV.
+if (defined($ENV{'GASH_HUD'})) {
+    $hud_display = $ENV{'GASH_HUD'};
+}
+# Gash output such as level up, etc.
+if (defined($ENV{'GASH_MESSAGES'})) {
+    $messages_display = $ENV{'GASH_MESSAGES'};
+}
+
+if (defined($ENV{'GASH_VERBOSE'})) {
+    $verbose = 1;
+}
+
+if (defined($ENV{'GASH_DEBUG'})) {
+    $verbose = 2;
+}
+
+# When you just want to quickly shut off all GASH output.
+# Note, it still runs.
+my $gash_silence = 0;
+if (defined($ENV{'GASH_SILENCE'})) {
+    $gash_silence = $ENV{'GASH_SILENCE'};
+    $hud_display = 0;
+    $messages_display = 0;
+    $verbose = 0;
+}
+
+
+
+
+###########################
+# PROCESS SAVED GAME FILE #
+###########################
+
+my $saveflocked = 0;
+
+if ( -e $savefile ) {
+    print "DEBUG: Found the file.\n" if ($verbose >= 2);
+    open($savefh, "<", $savefile) || die("Could not open savefile $savefile: $!\n");
+    flock($savefh, LOCK_EX) or die("Could not get lock for reading on save file $savefile: $!\n");
+    $saveflocked = 1;
+
+    my $filedata = "";
+    my $readsize = 2**10 * 8;
+    my $i = 0;
+    while (read($savefh, $filedata, $readsize, $readsize * $i)) {
+        $i++;
+    } 
+    $filedata_unencoded = unpack("u", $filedata);
+    print "unencoded: $filedata_unencoded\n" if ($verbose >= 1);
+    &tokenize_data($filedata_unencoded, \%gamedata);
+} else {
+    $gamedata{'char_lasthist'} = 1;
+    $gamedata{'char_level'} = $default_level;
+    $gamedata{'char_hp'} = $default_hp;
+    $gamedata{'char_maxhp'} = $default_hp;
+    $gamedata{'char_exp'} = $default_exp;
+    $gamedata{'char_gold'} = $default_gold;
+    $gamedata{'char_inventory'} = [];
+    $gamedata{'char_quests'} = [];
+    $gamedata{'char_effects'} = [];
+    $message_output .= "Created new character. Good luck.\n";
+}
+
+my %items_for_sale = ();
+# What directory can a user cd into to access the store.
+my $game_store_dir = '/bin';
+
+my $command_mode = 0;
+
+my $last_shell_command_run = "";
+
+# By default, we don't have this set so that users just running
+# gash improperly will have to read the instructions first.
+if ($readinputforhist) {
+    # Read the input
+    my $lastline = "";
+    while (<>) { # Ideally, the user would run this with history | tail | gash
+                 #, but if they only run history | gash, do the right thing.
+        $lastline = $_;
+    }
+    $lastline =~ m/^\s*(\d+)\s\s(.*)/;
+    my $last_hist_number = $1;
+    $last_shell_command_run = $2;
+#    print "last_shell_command_run: $last_shell_command_run\n";
+    print "DEBUG: Found last_hist_number: $last_hist_number\n" if ($verbose >= 2);
+    # The reason we say != instead of > is because different
+    # shell sessions will have different history numbers.
+    if ($last_hist_number != $gamedata{'char_lasthist'}) {
+                                                           
+        $newcommandhasbeenrun = 1;
+        print "DEBUG: A new command has been run.\n" if ($verbose >= 2);
+        $gamedata{'char_lasthist'} = $last_hist_number;
+    }
+    if (!$last_hist_number) {
+        die("ERROR: Did not recognize the history format piped into gash.\n");
+    }
+} elsif (scalar(@ARGV) > 0) { # There are extra args on the command line. Probably commands.
+    $hud_display = 0;
+    $command_mode = 1;
+
+    if ($pwd eq $game_store_dir) {
+        %items_for_sale = (
+            'healthpotion' => {
+                'price' => 25,
+                'sellprice' => 20,
+                'weight' => 5,
+                'description' => "Restores 10 HP",
+            },
+            'spaceprotectionpotion' => {
+                'price' => 100,
+                'sellprice' => 80,
+                'lasts' => '1h',
+                'weight' => 5,
+                'description' => "Protects from spaces in dirs for 1 hour",
+            },
+        );
+
+    }
+
+    my @valid_commands = ('look','l','inventory','inv','i','character','char','c','drop','d','take','t','buy','b','sell','s','use','u','dump');
+
+    # I'll probably discover later that it was a mistake to put this part of the
+    # game here, but since its the first game I've written, I'll have to learn
+    # from mistakes I guess.
+    my $game_command = shift;
+    if (grep(/^$game_command$/, @valid_commands)) {
+        if ($game_command =~ m/^(l|look)$/) {
+            if (keys %items_for_sale) { # Are there items for sale here?
+                $message_output .= "The following items are for sale here:\n";
+                $message_output .= sprintf("%-70s  %5s\n", "ITEM NAME (DESCRIPTION)", "PRICE");
+                foreach my $item (keys %items_for_sale) {
+                    my $description = $items_for_sale{$item}{'description'};
+                    my $price = $items_for_sale{$item}{'price'};
+                    $message_output .= sprintf("%-70s  %5s\n", "$item ($description)", $price);
+                }
+            } else {
+                $message_output .= "You see nothing here.\n";   
+            }
+        } elsif ($game_command =~ m/^(inventory|inv|i)$/) {
+            foreach my $item (@{$gamedata{'char_inventory'}}) {
+                printf ("You have a '%s'\n", $item);
+            }
+        } elsif ($game_command =~ m/^(character|char|c)$/) {
+            
+            my $char_output = "";
+            $char_output .= "Your Character\n";
+            $char_output .= "            Level : " . $gamedata{'char_level'} . "\n";
+            $char_output .= " ExperiencePoints : " . $gamedata{'char_exp'} . " / " . &level_base_exp_calc($gamedata{'char_level'} + 1) . "\n";
+            $char_output .= "   Hit points(HP) : " . $gamedata{'char_hp'} . " / " . $gamedata{'char_maxhp'} . "\n";
+            $char_output .= "             Gold : " . $gamedata{'char_gold'} . "\n";
+            $char_output .= "        Inventory : ";
+
+            my $indent = "";
+            foreach $item (@{$gamedata{'char_inventory'}}) {
+                $char_output .= "$indent$item\n"; 
+                $indent = "                    "; # Brings the second line and after over in line.
+            }
+
+            $char_output = make_box_around_text('GASH', 'left', $character_boxchar_ref, $char_output);
+
+            print $char_themecode . $char_output . $ansi_reset;
+
+        } elsif ($game_command =~ m/^(buy|b)$/) {
+            # buy what?
+            my $buy_what = shift;
+            if (grep(/^$buy_what$/, keys %items_for_sale)) {
+                my $item_price = $items_for_sale{$buy_what}{'price'};
+                if ($gamedata{'char_gold'} >= $item_price) { # Does the character have enough gold to buy.
+                    $gamedata{'char_gold'} = $gamedata{'char_gold'} - $item_price;
+                    push(@{$gamedata{'char_inventory'}}, $buy_what);
+                    $message_output .= sprintf("You bought a '%s' for %d gold\n", $buy_what, $item_price);
+                } else {
+                    $message_output .= sprintf("You don't have enough gold to buy '%s'\n", $buy_what);
+                }
+            } else {
+                $message_output .= sprintf ("There is no '%s' for sale here\n", $buy_what);
+            }
+
+        } elsif ($game_command =~ m/^(drop|d)$/) {
+            my $drop_what = shift;
+
+            if (does_char_have_item($drop_what, \%gamedata)) {
+                printf ("GASH: Are you sure you want to drop a '%s' (It will be gone forever) (y/N)? ", $drop_what);
+                my $answer = <STDIN>;
+                chomp($answer);
+                if ($answer eq 'y') {
+                    remove_item_from_char($drop_what, \%gamedata);
+                    $message_output .= sprintf("You dropped a '%s' and it mysteriously disappeared.\n", $drop_what);
+                }
+            } else {
+                $message_output .= sprintf("You don't have a '%s'\n", $drop_what);
+            }
+        } elsif ($game_command =~ m/^(sell|s)$/) {
+            my $sell_what = shift;
+            my $sellprice = $items_for_sale{$sell_what}{'sellprice'};
+            if ($pwd eq $game_store_dir) {
+                if (!does_char_have_item($sell_what, \%gamedata)) {
+                    $message_output .= sprintf("You don't have a '%s'\n", $sell_what);
+                } else {
+                    if ($sellprice > 0) {
+                        printf ("Do you want to sell '%s' for %d gold? (y/N) ", $sell_what, $sellprice);
+                        my $answer = <STDIN>;
+                        chomp($answer);
+                        if ($answer eq 'y') {
+                            $gamedata{'char_gold'} += $sellprice;
+                            &remove_item_from_char($sell_what, \%gamedata);
+                            $message_output .= sprintf("You sold a '%s' for %d gold.\n", $sell_what, $sellprice);
+                        }
+                    } else {
+                        $message_output .= sprintf("Item '%s' cannot be sold.\n", $sell_what);
+                    }
+                }
+            } else {
+                $message_output .= "You can't sell items here. Must go to the store.\n";
+            }
+        } elsif ($game_command =~ m/^(use|u)$/) {
+            my $use_what = shift;
+            if (&does_char_have_item($use_what, \%gamedata)) {
+                if ($use_what eq "healthpotion") {
+                    $gamedata{'char_hp'} += 10;
+                    &remove_item_from_char($use_what, \%gamedata);
+                } elsif ($use_what eq "spaceprotectionpotion") {
+
+                }
+            } else {
+                $message_output .= sprintf ("You don't have a '%s'\n", $use_what);
+            } 
+        } elsif ($game_command =~ m/^dump$/) {
+            print Dumper \%gamedata;
+        }
+    } else {
+        die("GASH ERROR: Unknown command: '$game_command'\n");
+    }
+} else {
+    if (-e $savefile) {
+        print <<EOD;
+
+  gash: available commands:
+
+     character   - See your character's information
+     inventory   - See your inventory
+     look        - Look at what is here
+     take <item> - Take <item>
+     drop <item> - Drop <item>
+     buy <item>  - Buy <item> from the store.
+     sell <item> - Sell <item> back to the store.
+
+EOD
+    } else {
+
+        if ($shell eq "/bin/bash") {
+            print <<EOD;
+Welcome to GASH, the gamification system for your interactive shell.
+To use gash, put the following in your PROMPT_COMMAND variable:
+
+PROMPT_COMMAND="lastreturn=\$?; history |gash -i -C \$COLUMNS -l \$lastreturn"
+
+You can append this to any current PROMPT_COMMAND you have set, but make
+sure the lastreturn=\$? part goes before everything else. Put this in
+your .bashrc so it runs on every login. Make sure you include the backslashes
+preceeding the variable names.
+
+You can also setup a .gashrc file in your home directory for extra
+configuration options. See the sample rc file that came with the gash program.
+
+EOD
+
+        } elsif ($shell eq "/bin/zsh") {
+        } elsif ($shell eq "/bin/tcsh") {
+
+        } else {
+            print "I'm sorry but gash doesn't support your shell: $shell.\n";
+        }
+    }
+    exit(0);
+}
+
+
+
+
+#my $newcommandhasbeenrun = 0; # Pressing return or whatever at the prompt shouldn't
+#                              # trigger the game logic.
+#if ($last_hist_number > $gamedata{'char_lasthist'}) {
+#    $newcommandhasbeenrun = 1;
+#    print "NOTICE: A new command has been run.\n" if ($verbose);
+#    $gamedata{'char_lasthist'} = $last_hist_number;
+#}
+
+
+###########################
+# GAME ENGINE LOGIC BEGIN #
+###########################
+
+print Dumper(\%gamedata) if ($verbose >= 2);
+
+print "char_hp: $gamedata{'char_hp'}\n" if ($verbose >= 2);
+print "char_lasthist: $gamedata{'char_lasthist'}\n" if ($verbose >= 2);
+
+
+
+my $char_dead = 0; # If the character dies, there are certain things we shouldn't run.
+if ($game_engine_on) { # NORMAL LOGIC
+
+    if ($pwd =~ m/ /) {
+        $gamedata{'char_hp'}--;
+        $message_output .= "The poisonous content of this directory path causes you 1 point of damage.\n";
+    }
+    if ($pwd eq $game_store_dir && ($command_mode == 0)) {
+        $message_output .= "Welcome to the store. Use gash look to see what is available.\n";
+    }
+
+    print "DEBUG: last return: $lastreturnvalue newcommandhasbeenrun: $newcommandhasbeenrun\n" if ($verbose >= 2);
+    if ($lastreturnvalue == 0 && $newcommandhasbeenrun && ($command_mode == 0) && ($last_shell_command_run !~ /^\s*gash\b/)) {
+        $gamedata{'char_exp'}++;
+    } elsif ($lastreturnvalue != 0 && $newcommandhasbeenrun) {
+        $gamedata{'char_hp'}--;
+        $message_output .= "You made a mistake and take 1 point of damage.\n";
+    }
+
+    if ($gamedata{'char_hp'} > $gamedata{'char_maxhp'}) {
+        $gamedata{'char_hp'} = $gamedata{'char_maxhp'};
+    }
+
+
+    if ($gamedata{'char_hp'} <= 0) {  # CHARACTER DIED
+        $message_output .= "You died! Press enter to create new character.\n";
+        my $readinput = <STDIN>;
+        if ($saveflocked) {
+            flock($savefh, LOCK_UN) or die "Cannot unlock save file: $!\n";
+        }
+        unlink($savefile) || die("ERROR: Could not remove game data file.");
+#        $message_output .= "Starting new character.\n";
+        $char_dead = 1;
+    }
+
+
+    if ($char_dead == 0 && $gamedata{'char_exp'} != 0 && $gamedata{'char_exp'} >= &level_base_exp_calc($gamedata{'char_level'} + 1)) {
+        $gamedata{'char_level'}++;
+        my $newhpvalue = &level_max_hp_calc($gamedata{'char_level'}); # This is the new char_level value incremented on line before.
+        $gamedata{'char_hp'}  = $newhpvalue;
+        $gamedata{'char_maxhp'} = $newhpvalue;
+
+    
+        if ($messages_display) {
+            $message_output .= "          LEVEL UP!!           \n";
+            $message_output .= "    Next GASH level at " . &level_base_exp_calc($gamedata{'char_level'}+1) . "     \n";
+
+        }
+    }
+
+    $message_output = make_box_around_text('GASH Message', 'left', $messages_boxchar_ref, $message_output);
+
+    if (length($message_output)) {
+        print $messages_themecode . $message_output . $ansi_reset;
+    }
+    # DISPLAY DATA
+
+    if ($char_dead == 0 && $hud_display && (($gamedata{'char_lasthist'} % $hud_every_n_times) == 0)) { # Allow the user to turn the hud off in various ways.
+
+
+        if ($hud_type eq "box") { # Draw a fancy box at the top
+
+            my $hud_output = "";
+
+            $hud_output .= " LVL: " . $gamedata{'char_level'} . " \n";
+            $hud_output .= "  HP: " . $gamedata{'char_hp'} . " \n";
+            $hud_output .= " Exp: " . $gamedata{'char_exp'} . " \n";
+            $hud_output .= "Gold: " . $gamedata{'char_gold'} . " \n";
+
+            $hud_output = make_box_around_text('GASH', 'center', $hud_boxchar_ref, $hud_output);
+
+            my $hud_width = length((split(/\n/, $hud_output))[0]) - 1; # -1 for newline at end of each line.
+
+
+            # This takes the hud_output string and draws it in the upper right corner of the terminal.
+            print "\e7"; # Save cursor position. Supposed to be the most compatible way of doing it.
+            my $ln = 1;
+            my $leftside = $columns - $hud_width;
+            foreach my $line (split(/\n/, $hud_output)) {
+                print "\e[$ln;${leftside}f${hud_themecode}$line\e[0m";
+                $ln++;
+            }
+            print "\e8"; # Restore previous cursor position.
+
+
+        } elsif ($hud_type eq "beforeprompt") {
+
+
+            if ($columns >= 80) {
+                printf "$hud_themecode GASH Level: %d Exp: %d  HP: %d  Gold: %d\e[K\e[0m\n$themecodes_after",
+                    $gamedata{'char_level'},
+                    #$gamedata{'char_exp'} . " / " . &level_base_exp_calc($gamedata{'char_level'} + 1),
+                    $gamedata{'char_exp'},
+                    $gamedata{'char_hp'},
+                    $gamedata{'char_gold'};
+
+            } else {
+                print "No character display on less than 80 column terminals.\n" if ($verbose >= 1);
+            }
+        } elsif ($hud_type eq "topline") {
+
+            if ($columns >= 80) {
+                printf "\e7\e[0;0f$hud_themecode GASH Level: %-4d Exp: %s  HP: %-5d  Gold: %-8d %s \e[K\e[0m\n$themecodes_after\e8",
+                    $gamedata{'char_level'},
+                    $gamedata{'char_exp'} . " / " . &level_base_exp_calc($gamedata{'char_level'} + 1),
+                    $gamedata{'char_hp'},
+                    $gamedata{'char_gold'},
+                    $last_game_message;
+
+            } else {
+                print "No character display on less than 80 column terminals.\n" if ($verbose >= 1);
+            }
+        } elsif ($hud_type eq "titlebar") {
+            printf "\033]2;GASH - Level: %s HP: %s Exp: %s Gold: %s\007",
+            $gamedata{'char_level'},
+            $gamedata{'char_hp'},
+            $gamedata{'char_exp'},
+            $gamedata{'char_gold'};
+                                                                
+
+        }
+    }
+
+
+
+
+# Save the current values
+#char_level=5;char_hp=23;char_exp=1250;char_gold=23;char_inventory=Stallman's Control Key \\= Awesome!,Eric's Golden Pipe\\, "+1 vs. less\\; Or +2 vs. more",Linus's Flame Suit;
+#    $savefile_data = "char_lasthist=" . $gamedata{'char_lasthist'} . ";char_level=" . $gamedata{'char_level'} . ";char_hp=" .  $gamedata{'char_hp'} .
+#    ";char_maxhpthislevel=" . $gamedata{'char_maxhpthislevel'} .
+#    ";char_exp=" . $gamedata{'char_exp'} . ";char_gold=" . $gamedata{'char_gold'} . ";char_inventory=Knife,Funnel,Mark's Endless Pipe\\; +1 vs. zombies\\, or STDIN,Health Potion;char_quests=;";
+
+    if ($char_dead == 0) {
+
+        $savefile_data = &makesavedata(\%gamedata);
+        print "savefile_data: $savefile_data\n" if ($verbose >= 2);
+    
+        $filedata_encoded = pack("u", $savefile_data);
+        open($savefh, ">", $savefile) || die("ERROR: Couldn't open savefile for writing: $!\n");
+        print $savefh $filedata_encoded;
+        flock($savefh, LOCK_UN) or die("Could not release lock after writing to savefile: $!\n");
+        close($savefh);
+    }
+}
+
+
+
+
+
+exit(0);
+
+
+###############
+# SUBROUTINES #
+###############
+
+sub is_boolean {
+    my $value = shift;    
+    
+    if ($value =~ m/^(yes|no|true|false|on|off|1|0)$/i) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+sub make_boolean {
+    my $value = shift;    
+    
+    if ($value =~ m/^(yes|true|on|1)$/i) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+sub is_alphanumeric {
+    my $value = shift;
+
+    if ($value =~ m/^[a-z0-9]+$/i) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+sub is_alphanumlist {
+    my $value = shift;
+
+    if ($value =~ m/^[a-z0-9,]+$/i &&
+         (substr($value,0,1) ne ',') && # Make sure the first or last character isn't a comma.
+         (substr($value,length($value) - 1,1) ne ',')) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+sub makesavedata {
+    my $arrayref = shift;
+
+    my $outputstring = "";
+
+    foreach my $key (keys %$arrayref) {
+        $outputstring .= $key . "=";
+
+        if (ref $$arrayref{$key} eq 'ARRAY') {
+            foreach my $element (@{$$arrayref{$key}}) {
+                $element =~ s/\\/\\\\/g; # This has to be done first obviously.
+                $element =~ s/;/\\;/g;
+                $element =~ s/=/\\=/g;
+                $element =~ s/,/\\,/g;
+                $outputstring .= "$element,";
+                print "Array element in $key: $element\n" if ($verbose >= 2);
+            }
+            # Change the trailing , to a ; to close off the array value.
+            $outputstring =~ s/,$/;/;
+        } else {
+            my $value = $$arrayref{$key};
+            $value =~ s/\\/\\\\/g; # This has to be done first obviously.
+            $value =~ s/;/\\;/g;
+            $value =~ s/=/\\=/g;
+            $value =~ s/,/\\,/g;
+            $outputstring .= $value . ";";
+
+            print "Scalar value for $key: " . $value . "\n" if ($verbose >= 2);
+        }
+
+    }
+
+    return $outputstring;
+}
+
+# Original idea, we'll come back to this more complex way later.
+sub level_base_exp_calc {
+    my $level = shift;
+
+    my $base_exp = 0;
+    for ($i = 1; $i < $level; $i++) {
+        $base_exp += ($i - 1) * 100 * (1 + ($i / 20));
+    }
+    return $base_exp;
+}
+
+#sub level_base_exp_calc {
+#    my $level = shift;
+#
+#    #$base_exp = ($level * 100) - 100;
+#    $base_exp = ($level * 10) - 10;
+#
+#    return $base_exp;
+#}
+
+# This was the original idea, I'm commenting it out for now.
+#sub level_max_hp_calc {
+#    my $level = shift;
+#
+#    my $max_hp = 0;
+#    for ($i = 1; $i < $level; $i++) {
+##        $max_hp += ($i - 1) * 100 * (1 + ($i / 20));
+#        $max_hp = 4 + int( $i * ( 1 + ( $i / 5 ) ) );
+#    }
+#
+##    my $max_hp = int( 4 * $i * ( 1 + ( $i / 10 ) ) );
+#
+#    return $max_hp;
+#}
+
+sub level_max_hp_calc {
+    my $level = shift;
+
+    my $max_hp = 3 + (2 * $level);
+
+    return $max_hp;
+}
+
+# The data is all on one line in the format
+# key=value;key2=value;key3=value1,value2,value3,value\,with\,commas;
+# The data string must end with ; and cannot end with \; unless it is \\;
+
+# Example
+#$mydata = <<EOD;
+#level=5;hp=23;exp=1250;gold=23;inventory=Stallman's Control Key \\= Awesome!,Eric's Golden Pipe\\, "+1 vs. less\\; Or +2 vs. more",Linus's Flame Suit;
+#EOD
+
+sub tokenize_data {
+    my $data = shift;
+    my $hashref = shift;
+    chomp($data);
+
+    my $thischar = "";
+    my $datalen = length($data);
+    my $buffer = "";
+    my $keyname = "";
+    my @values = ();
+    for (my $i = 0; $i < $datalen; $i++) {
+        $thischar = substr($data, $i, 1);
+        if ($thischar eq "\\") {
+            $i++;
+            $thischar = substr($data, $i, 1);
+            $buffer .= $thischar;
+        } elsif ($thischar eq "=") {
+            $keyname = $buffer;
+            $buffer = ""; # Reset the buffer for the next keyword.
+        } elsif ($thischar eq ",") { # Multi value.
+            push (@values, $buffer);
+            $buffer = "";
+        } elsif ($thischar eq ";") { # We've reached the end of key/value pair.
+            # I need to do this better. Maybe I should prefix each value with its type.
+            if (scalar @values || $keyname eq "char_inventory" || $keyname eq "char_quests") {
+                push (@values, $buffer);
+                $$hashref{$keyname} = [@values];
+            } else {
+                $$hashref{$keyname} = $buffer;
+            }
+            @values = ();
+            $buffer = "";
+            $keyname = "";
+        } else {
+            $buffer .= $thischar;
+        }
+    }
+    return 1;
+}
+
+
+# Requires fg and bg color and an attribute list array ref, even if its just 'normal'.
+sub get_ansi_color_seq {
+    # Make a hash of named colors and their ANSI equivilent
+    my %ansi_fg_colors = (
+        'black'   => '30',
+        'red'     => '31',
+        'green'   => '32',
+        'yellow'  => '33',
+        'blue'    => '34',
+        'magenta' => '35',
+        'cyan'    => '36',
+        'white'   => '37',
+        'normal'  => '39',
+        # Below this line would be the extended colors in the 88 and 256 color range
+    );
+
+    my %ansi_bg_colors = (
+        'black'   => '40',
+        'red'     => '41',
+        'green'   => '42',
+        'yellow'  => '43',
+        'blue'    => '44',
+        'magenta' => '45',
+        'cyan'    => '46',
+        'white'   => '47',
+        'normal'  => '49',
+        # Below this line would be the extended colors in the 88 and 256 color range
+    );
+
+    # Such as normal, bold, underline, blink, etc.
+    my %ansi_text_attributes = (
+        'normal'    => '0',
+        'bold'      => '1',
+        'bright'    => '1', # Bright is often an alias of bold.
+        'light'     => '1', # As is light.
+        'italic'    => '3',
+        'underline' => '4',
+        'blink'     => '5',
+        'reverse'   => '7',
+        'invisible' => '8',
+    );
+
+
+    my $fgcolor = shift;
+    my $bgcolor = shift;
+    my $attr_ref = shift;
+
+    my $ansi_fg_code;
+    my $ansi_bg_code;
+
+    if ($fgcolor !~ m/^[a-zA-Z0-9]+$/ || $bgcolor !~ m/^[a-zA-Z0-9]+$/) {
+        return "";
+    }
+
+    if ($ansi_fg_colors{$fgcolor}) {
+        $ansi_fg_code = $ansi_fg_colors{$fgcolor};
+    }
+    if ($ansi_bg_colors{$bgcolor}) {
+        $ansi_bg_code = $ansi_bg_colors{$bgcolor};
+    }
+
+    foreach my $attr (@$attr_ref) {
+        if ($attr =~ m/^[a-zA-Z0-9]+$/ && defined($ansi_text_attributes{$attr})) {
+            $ansi_attribute_codes .= $ansi_text_attributes{$attr} . ";";
+        }
+    }
+
+    # No sense in removing and then readding the ; after the attribute codes, so just leave it in.
+    $ansi_code_string = "\033[" . $ansi_attribute_codes . $ansi_fg_code . ";" . $ansi_bg_code . "m";
+
+    return $ansi_code_string;
+}
+
+
+sub make_box_around_text {
+    my $title = shift;
+    my $alignment = shift; # left, center or right
+    my $draw_char_ref = shift; # An associative array ref.
+    my $string = shift;
+
+    if (length($string) == 0) {
+        return "";
+    }
+
+    # This is rather messy code, sorry.
+
+    my $return_string = "";
+
+    my @linearray = split(/\n/, $string);
+    my $maxwidth = 0;
+    my $lines = 0;
+
+    my $upper_left_corner  = $$draw_char_ref{'upper_left_corner'};
+    my $upper_right_corner = $$draw_char_ref{'upper_right_corner'};
+    my $lower_left_corner  = $$draw_char_ref{'lower_left_corner'};
+    my $lower_right_corner = $$draw_char_ref{'lower_right_corner'};
+    my $vertical           = $$draw_char_ref{'vertical'};
+    my $horizontal         = $$draw_char_ref{'horizontal'};
+    my $title_right        = $$draw_char_ref{'title_right'};
+    my $title_left         = $$draw_char_ref{'title_left'};
+
+    # Check for the longest line.
+    foreach $line (@linearray) {
+        if (length($line) > $maxwidth) {
+            $maxwidth = length($line);
+        }
+        $lines++;
+    }
+
+  
+    my $titleline = "";
+    $titleline .= $upper_left_corner; 
+    for (my $i = 0; $i < $maxwidth; $i++) {
+        $titleline .= $horizontal;
+    }
+    $titleline .= $upper_right_corner;
+
+    my $titlelength = length($title);
+    if ($titlelength >= ($maxwidth - 4)) {
+        $title = substr($title,0,($maxwidth-4));
+        # Remove any extra space off the end so it looks better.
+        $title =~ s/\s*$//;
+        $titlelength = length($title);
+    }
+
+    my $skiphorizontal = 0;
+    if (($titlelength + 4) == $maxwidth) {
+        $skiphorizontal = 1;
+    }
+
+    my $newtitleline = "";
+
+    if ($alignment eq "left") {
+        my $longwidth = ($maxwidth) - $titlelength - 5;
+        my $longbar = "";
+        for (my $i = 0; $i < $longwidth; $i++) {
+            $longbar .= $horizontal;
+        }
+        $newtitleline = $upper_left_corner .
+                        (($skiphorizontal) ? "" : $horizontal) .
+                        $title_left .
+                        " " .
+                        $title .
+                        " " .
+                        $title_right .  $longbar .  $upper_right_corner;
+    } elsif ($alignment eq "right") {
+        my $longwidth = ($maxwidth) - $titlelength - 5;
+        my $longbar = "";
+        for (my $i = 0; $i < $longwidth; $i++) {
+            $longbar .= $horizontal;
+        }
+        $newtitleline = $upper_left_corner . $longbar . $title_left .
+                        " " . $title . " " .
+                        $title_right .
+                        (($skiphorizontal) ? "" : $horizontal) .
+                        $upper_right_corner;
+    } elsif ($alignment eq "center") {  # Center alignment.
+        my $horizontalbar = "";
+        my $barlength = int($maxwidth - 5 - $titlelength) / 2;
+        my $extrabar = "";
+        # If the title or the box itself is an odd width,
+        # we need an extra bar in the title.
+        if (($maxwidth % 2 == 1) && ($titlelength % 2 == 0)) {
+            $extrabar = $horizontal;
+        }
+        for (my $i = 0; $i < $barlength; $i++) {
+            $horizontalbar .= $horizontal;
+        }
+        $newtitleline = $upper_left_corner . $horizontalbar . $title_left . " " . $title . " " . $title_right . $horizontalbar . $extrabar . $upper_right_corner;
+    }
+
+    $return_string = $newtitleline . "\n";
+    foreach $line (@linearray) {
+        chomp($line);
+        $difference = $maxwidth - length($line);
+        $return_string .= $vertical .  $line ;
+        for (my $i = 0; $i < $difference; $i++) {
+            $return_string .= " ";
+        }
+        $return_string .= $vertical . "\n"
+    }
+
+    $return_string .= $lower_left_corner; 
+    for (my $i = 0; $i < $maxwidth; $i++) {
+        $return_string .= $horizontal;
+    }
+    $return_string .= $lower_right_corner . "\n";
+
+    return $return_string;
+
+}
+
+
+#&remove_item_from_char($use_what, \%gamedata);
+
+sub remove_item_from_char {
+    my $item = shift;
+    my $char_hash_ref = shift;
+
+    my $item_number_in_list = -1;
+   
+    my $i = 0; 
+    foreach my $inv_item (@{$$char_hash_ref{'char_inventory'}}) {
+        if ($item eq $inv_item) {
+            $item_number_in_list = $i;
+            last;
+        }
+        $i++;
+    }
+
+    splice(@{$$char_hash_ref{'char_inventory'}}, $item_number_in_list, 1);
+
+    return 1;
+}
+
+sub does_char_have_item {
+    my $item = shift;
+    my $char_hash_ref = shift;
+
+    if (grep(/^$item$/, @{$$char_hash_ref{'char_inventory'}})) {
+        return 1;
+    } else {
+        return 0;
+    }
+}

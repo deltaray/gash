@@ -1,0 +1,22 @@
+# Sample config file. Put this at ~/.gashrc
+# This is a comment. A comment can also be after a value as shown below.
+
+utf8_mode = yes
+
+hud_display = yes       # This can also be set with the GASH_HUD env variable
+hud_every_n_times = 1   # Display HUD every n commands instead of every time.
+hud_type = box          # Draw box in upper right. 
+#hud_type = beforeprompt
+#hud_type = titlebar
+hud_color_fg = red
+hud_color_bg = normal
+hud_color_attr = bold,bright
+
+messages_display = yes # This can also be set with the GASH_MESSAGES env var.
+messages_color_fg = green
+messages_color_bg = normal
+messages_color_attr = bold,bright
+
+leaderboard = no
+#leaderboard_authcode = 
+
