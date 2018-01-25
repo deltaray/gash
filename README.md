@@ -1,10 +1,7 @@
 
 NOTICE
 ======
-This program isn't fully ready for public decimation at this time. I've put
-it on github, but that's mostly just to keep track of the code during development
-and let a few people watch the progress. Please don't announce this anywhere
-yet without getting my permission (deltaray@slugbug.org). Thanks.
+2018 update: I never really fully released this software because I had planned on rewriting it in python and adding a leaderboard functionality. But I couldn't figure out how to get around the problem of cheating while allowing arbitrary commands and protecting privacy.
 
 
 Welcome
