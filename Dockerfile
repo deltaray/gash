@@ -8,6 +8,7 @@ RUN apt update && apt install -y \
     python3 \
     gcc \
     wget \
+    procps \
  && rm -rf /var/lib/apt/lists/*
 
 RUN wget https://github.com/phyver/GameShell/raw/master/GameShell.tgz -O - | tar -xz
