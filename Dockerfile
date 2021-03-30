@@ -9,6 +9,7 @@ RUN apt update && apt install -y \
     gcc \
     wget \
     procps \
+    less \
  && rm -rf /var/lib/apt/lists/*
 
 RUN wget https://github.com/phyver/GameShell/raw/master/GameShell.tgz -O - | tar -xz
